@@ -107,7 +107,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate and publish manifest.json
+      - name: Publish manifest to manifest-release branch
         run: |
           VERSION="${{ steps.package.outputs.version }}"
           TARGET_ABI="${{ steps.package.outputs.target_abi }}"
@@ -116,7 +116,13 @@ jobs:
           REPO="${{ github.repository }}"
           ZIP_NAME="${{ steps.package.outputs.zip_name }}"
 
-          cat > manifest.json <<EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan manifest-release
+          git rm -rf . 2>/dev/null || true
+          git clean -fd 2>/dev/null || true
+
+          cat > manifest.json <<MANIFEST
           [
             {
               "guid": "8c5d0e91-4f2a-4b6d-9e3f-1a7c8d9e0f2b",
@@ -137,15 +143,8 @@ jobs:
               ]
             }
           ]
-          EOF
+          MANIFEST
 
-      - name: Publish manifest to manifest branch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan manifest-release 2>/dev/null || git checkout manifest-release
-          git rm -rf . 2>/dev/null || true
-          mv manifest.json .
           git add manifest.json
-          git commit -m "Update manifest.json for v${{ steps.package.outputs.version }}"
+          git commit -m "Update manifest.json for v${VERSION}"
           git push -f origin manifest-release
