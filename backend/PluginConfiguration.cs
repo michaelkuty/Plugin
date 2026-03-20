@@ -38,6 +38,14 @@ public class PluginConfiguration : BasePluginConfiguration
     public string? JellyseerrDisplayName { get; set; }
 
     /// <summary>
+    /// Jellyseerr admin API key for SSO user authentication.
+    /// When set, users who authenticate via SSO (without a Jellyfin password)
+    /// can access Jellyseerr using API key impersonation (X-Api-Key + X-API-User).
+    /// Generate this key in Jellyseerr: Settings → General → API Key.
+    /// </summary>
+    public string? JellyseerrApiKey { get; set; }
+
+    /// <summary>
     /// Server-wide MDBList API key shared with all users.
     /// Users who set their own key will use that instead.
     /// </summary>
