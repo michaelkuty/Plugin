@@ -411,6 +411,9 @@ var Genres = {
 
         var browseGrid = this.container.querySelector('.moonfin-genres-browse-grid');
         if (browseGrid) {
+            if (this._scrollHandler) {
+                this.container.removeEventListener('scroll', this._scrollHandler);
+            }
             this._scrollHandler = function() {
                 if (self.browseLoading) return;
                 if (self.browseItems.length >= self.browseTotalCount) return;
