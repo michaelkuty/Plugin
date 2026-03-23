@@ -1,0 +1,20 @@
+[
+  {
+    "guid": "8c5d0e91-4f2a-4b6d-9e3f-1a7c8d9e0f2b",
+    "name": "Moonfin",
+    "overview": "Custom UI and settings sync for Jellyfin",
+    "description": "Moonfin brings a modern TV-style UI to Jellyfin web. Features include: custom navbar, media bar with featured content, Jellyseerr integration, and cross-device settings synchronization.",
+    "owner": "RadicalMuffinMan",
+    "category": "General",
+    "versions": [
+      {
+        "version": "1.7.3.0",
+        "changelog": "Add API key auth with user impersonation for SSO users",
+        "targetAbi": "10.10.0.0",
+        "sourceUrl": "https://github.com/michaelkuty/Plugin/releases/download/v1.7.3.0/moonfin_1.7.3.0.zip",
+        "checksum": "93d979d27df4ea90e73d9aac00867199",
+        "timestamp": "2026-03-23T09:44:25Z"
+      }
+    ]
+  }
+]
