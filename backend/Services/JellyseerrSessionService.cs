@@ -102,13 +102,107 @@ public class JellyseerrSessionService
         return null;
     }
 
+    private static void AddMoonfinHeaders(HttpClient client)
+    {
+        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "Moonfin-Server");
+    }
+
+    private static bool AddApiKeyHeaders(HttpClient client, string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return false;
+        }
+
+        client.DefaultRequestHeaders.Remove("X-Api-Key");
+        client.DefaultRequestHeaders.TryAddWithoutValidation("X-Api-Key", apiKey);
+        return true;
+    }
+
+    private static bool AddApiKeyImpersonationHeaders(HttpClient client, string? apiKey, int jellyseerrUserId)
+    {
+        if (jellyseerrUserId <= 0 || !AddApiKeyHeaders(client, apiKey))
+        {
+            return false;
+        }
+
+        client.DefaultRequestHeaders.Remove("X-API-User");
+        client.DefaultRequestHeaders.TryAddWithoutValidation("X-API-User", jellyseerrUserId.ToString());
+        return true;
+    }
+
+    private static string? GetStringProperty(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!element.TryGetProperty(name, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind == JsonValueKind.String)
+            {
+                return property.GetString();
+            }
+
+            if (property.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
+            {
+                return property.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    private static int? GetIntProperty(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!element.TryGetProperty(name, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var number))
+            {
+                return number;
+            }
+
+            if (property.ValueKind == JsonValueKind.String && int.TryParse(property.GetString(), out number))
+            {
+                return number;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool MatchesSeerrUser(JsonElement user, Guid jellyfinUserId, string username)
+    {
+        var jellyfinUserIdText = jellyfinUserId.ToString();
+        var candidates = new[]
+        {
+            GetStringProperty(user, "jellyfinUserId", "jellyfinUserID"),
+            GetStringProperty(user, "jellyfinUsername"),
+            GetStringProperty(user, "username"),
+            GetStringProperty(user, "email"),
+            GetStringProperty(user, "displayName")
+        };
+
+        return candidates.Any(candidate =>
+            !string.IsNullOrWhiteSpace(candidate) &&
+            (string.Equals(candidate, username, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(candidate, jellyfinUserIdText, StringComparison.OrdinalIgnoreCase)));
+    }
+
     /// <summary>
     /// Authenticates a Jellyfin user with Seerr and stores the session.
+    /// Supports "jellyfin", "local", and "apikey" auth modes.
     /// </summary>
     /// <param name="userId">The Jellyfin user ID.</param>
     /// <param name="username">The username.</param>
     /// <param name="password">The password.</param>
-    /// <param name="authType">Auth type: "jellyfin" (default) or "local" for a native Seerr account.</param>
+    /// <param name="authType">Auth type: "jellyfin" (default), "local", or "apikey".</param>
     /// <returns>The authenticated Seerr user info, or null on failure.</returns>
     public async Task<JellyseerrAuthResult?> AuthenticateAsync(Guid userId, string username, string? password, string? authType = null)
     {
@@ -119,6 +213,18 @@ public class JellyseerrSessionService
         {
             _logger.LogError("Seerr URL not configured");
             return null;
+        }
+
+        var isLocal = string.Equals(authType, "local", StringComparison.OrdinalIgnoreCase);
+        var useApiKey = string.Equals(authType, "apikey", StringComparison.OrdinalIgnoreCase);
+        if (!useApiKey && !isLocal && string.IsNullOrWhiteSpace(password) && !string.IsNullOrWhiteSpace(config?.JellyseerrApiKey))
+        {
+            useApiKey = true;
+        }
+
+        if (useApiKey)
+        {
+            return await AuthenticateWithApiKeyAsync(userId, username, jellyseerrUrl);
         }
 
         try
@@ -132,10 +238,8 @@ public class JellyseerrSessionService
             };
             using var client = new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(15);
-            client.DefaultRequestHeaders.TryAddWithoutValidation(
-                "User-Agent", "Moonfin-Server");
+            AddMoonfinHeaders(client);
 
-            var isLocal = string.Equals(authType, "local", StringComparison.OrdinalIgnoreCase);
             var authEndpoint = isLocal
                 ? $"{jellyseerrUrl}/api/v1/auth/local"
                 : $"{jellyseerrUrl}/api/v1/auth/jellyfin";
@@ -278,12 +382,182 @@ public class JellyseerrSessionService
     }
 
     /// <summary>
+    /// Authenticates a user via the configured Seerr API key with user impersonation.
+    /// </summary>
+    private async Task<JellyseerrAuthResult?> AuthenticateWithApiKeyAsync(Guid jellyfinUserId, string username, string jellyseerrUrl)
+    {
+        var apiKey = MoonfinPlugin.Instance?.Configuration?.JellyseerrApiKey;
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            _logger.LogError("Seerr API key not configured for API-key auth");
+            return new JellyseerrAuthResult
+            {
+                Success = false,
+                Error = "Seerr API key is not configured on the server"
+            };
+        }
+
+        try
+        {
+            using var client = new HttpClient();
+            client.Timeout = TimeSpan.FromSeconds(15);
+            AddMoonfinHeaders(client);
+            AddApiKeyHeaders(client, apiKey);
+
+            var seerrUser = await FindSeerrUserAsync(client, jellyseerrUrl, jellyfinUserId, username);
+            if (seerrUser == null)
+            {
+                _logger.LogWarning("Seerr user not found for Jellyfin user {Username} ({UserId})", username, jellyfinUserId);
+                return new JellyseerrAuthResult
+                {
+                    Success = false,
+                    Error = "User not found in Seerr. Make sure Jellyfin users are imported into Seerr."
+                };
+            }
+
+            if (!AddApiKeyImpersonationHeaders(client, apiKey, seerrUser.Value.Id))
+            {
+                return new JellyseerrAuthResult
+                {
+                    Success = false,
+                    Error = "Seerr API key impersonation could not be configured"
+                };
+            }
+
+            using var meResponse = await client.GetAsync($"{jellyseerrUrl}/api/v1/auth/me");
+            if (!meResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "Seerr API key impersonation failed for user {Username} ({SeerrUserId}): {Status}",
+                    username, seerrUser.Value.Id, meResponse.StatusCode);
+                return new JellyseerrAuthResult
+                {
+                    Success = false,
+                    Error = "Seerr API key impersonation failed. Check the API key and user mapping."
+                };
+            }
+
+            var session = new JellyseerrSession
+            {
+                JellyfinUserId = jellyfinUserId,
+                SessionCookie = string.Empty,
+                UseApiKey = true,
+                JellyseerrUserId = seerrUser.Value.Id,
+                Username = username,
+                DisplayName = seerrUser.Value.DisplayName,
+                Avatar = seerrUser.Value.Avatar,
+                Permissions = seerrUser.Value.Permissions,
+                CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                LastValidated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+
+            await SaveSessionAsync(session);
+
+            _logger.LogInformation(
+                "Seerr API-key SSO session created for user {Username} (Jellyfin: {UserId}, Seerr: {SeerrUserId})",
+                username, jellyfinUserId, session.JellyseerrUserId);
+
+            return new JellyseerrAuthResult
+            {
+                Success = true,
+                JellyseerrUserId = session.JellyseerrUserId,
+                DisplayName = session.DisplayName,
+                Avatar = session.Avatar,
+                Permissions = session.Permissions
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "Failed to connect to Seerr at {Url} using API-key auth", jellyseerrUrl);
+            return new JellyseerrAuthResult
+            {
+                Success = false,
+                Error = $"Cannot reach Seerr: {ex.Message}"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error during Seerr API-key auth for user {Username}", username);
+            return new JellyseerrAuthResult
+            {
+                Success = false,
+                Error = "An unexpected error occurred"
+            };
+        }
+    }
+
+    private async Task<(int Id, string DisplayName, string? Avatar, int Permissions)?> FindSeerrUserAsync(
+        HttpClient client,
+        string jellyseerrUrl,
+        Guid jellyfinUserId,
+        string username)
+    {
+        const int pageSize = 100;
+        const int maxPages = 100;
+
+        for (var page = 0; page < maxPages; page++)
+        {
+            var skip = page * pageSize;
+            using var response = await client.GetAsync($"{jellyseerrUrl}/api/v1/user?take={pageSize}&skip={skip}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to fetch Seerr users with API key: {Status}", response.StatusCode);
+                return null;
+            }
+
+            var body = await response.Content.ReadAsStringAsync();
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+
+            JsonElement results;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                results = root;
+            }
+            else if (!root.TryGetProperty("results", out results) || results.ValueKind != JsonValueKind.Array)
+            {
+                _logger.LogWarning("Seerr user API returned an unexpected response shape");
+                return null;
+            }
+
+            var resultCount = 0;
+            foreach (var user in results.EnumerateArray())
+            {
+                resultCount++;
+                if (!MatchesSeerrUser(user, jellyfinUserId, username))
+                {
+                    continue;
+                }
+
+                var id = GetIntProperty(user, "id");
+                if (id == null)
+                {
+                    continue;
+                }
+
+                var displayName = GetStringProperty(user, "displayName", "username", "email") ?? username;
+                var avatar = GetStringProperty(user, "avatar");
+                var permissions = GetIntProperty(user, "permissions") ?? 0;
+
+                return (id.Value, displayName, avatar, permissions);
+            }
+
+            if (resultCount < pageSize)
+            {
+                break;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Gets the stored session for a user, optionally validating it.
     /// </summary>
     public async Task<JellyseerrSession?> GetSessionAsync(Guid userId, bool validate = false)
     {
         var session = await LoadSessionAsync(userId);
-        if (session == null || string.IsNullOrEmpty(session.SessionCookie))
+        if (session == null || (!session.UseApiKey && string.IsNullOrEmpty(session.SessionCookie)))
         {
             if (session != null)
             {
@@ -318,6 +592,28 @@ public class JellyseerrSessionService
 
         try
         {
+            if (session.UseApiKey)
+            {
+                using var apiClient = new HttpClient();
+                apiClient.Timeout = TimeSpan.FromSeconds(10);
+                AddMoonfinHeaders(apiClient);
+
+                if (!AddApiKeyImpersonationHeaders(apiClient, config?.JellyseerrApiKey, session.JellyseerrUserId))
+                {
+                    return false;
+                }
+
+                using var apiResponse = await apiClient.GetAsync($"{jellyseerrUrl}/api/v1/auth/me");
+                if (!apiResponse.IsSuccessStatusCode)
+                {
+                    return false;
+                }
+
+                session.LastValidated = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                await SaveSessionAsync(session);
+                return true;
+            }
+
             var cookieContainer = new CookieContainer();
             cookieContainer.Add(new Uri(jellyseerrUrl), new Cookie("connect.sid", session.SessionCookie));
 
@@ -328,6 +624,7 @@ public class JellyseerrSessionService
             };
             using var client = new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(10);
+            AddMoonfinHeaders(client);
 
             var response = await client.GetAsync($"{jellyseerrUrl}/api/v1/auth/me");
 
@@ -435,7 +732,7 @@ public class JellyseerrSessionService
         }
 
         var session = await LoadSessionAsync(userId);
-        if (session == null)
+        if (session == null || (!session.UseApiKey && string.IsNullOrEmpty(session.SessionCookie)))
         {
             return new JellyseerrProxyResponse
             {
@@ -448,15 +745,33 @@ public class JellyseerrSessionService
         try
         {
             var cookieContainer = new CookieContainer();
-            cookieContainer.Add(new Uri(jellyseerrUrl), new Cookie("connect.sid", session.SessionCookie));
-
-            using var handler = new HttpClientHandler
-            {
-                CookieContainer = cookieContainer,
-                UseCookies = true
-            };
-            using var client = new HttpClient(handler);
+            using var handler = session.UseApiKey
+                ? null
+                : new HttpClientHandler
+                {
+                    CookieContainer = cookieContainer,
+                    UseCookies = true
+                };
+            using var client = handler == null ? new HttpClient() : new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(30);
+            AddMoonfinHeaders(client);
+
+            if (session.UseApiKey)
+            {
+                if (!AddApiKeyImpersonationHeaders(client, config?.JellyseerrApiKey, session.JellyseerrUserId))
+                {
+                    return new JellyseerrProxyResponse
+                    {
+                        StatusCode = 503,
+                        Body = JsonSerializer.SerializeToUtf8Bytes(new { error = "Seerr API key not configured", code = "API_KEY_NOT_CONFIGURED" }),
+                        ContentType = "application/json"
+                    };
+                }
+            }
+            else
+            {
+                cookieContainer.Add(new Uri(jellyseerrUrl), new Cookie("connect.sid", session.SessionCookie));
+            }
 
             // Build the target URL
             var targetUrl = $"{jellyseerrUrl}/api/v1/{path.TrimStart('/')}";
@@ -467,7 +782,7 @@ public class JellyseerrSessionService
 
             var request = new HttpRequestMessage(method, targetUrl);
 
-            if (method != HttpMethod.Get && method != HttpMethod.Head)
+            if (!session.UseApiKey && method != HttpMethod.Get && method != HttpMethod.Head)
             {
                 var csrfToken = await FetchCsrfTokenAsync(client, jellyseerrUrl, cookieContainer);
                 if (!string.IsNullOrEmpty(csrfToken))
@@ -503,7 +818,7 @@ public class JellyseerrSessionService
                 };
             }
 
-            if (response.IsSuccessStatusCode)
+            if (!session.UseApiKey && response.IsSuccessStatusCode)
             {
                 await CheckForRotatedCookieAsync(session, response, cookieContainer, jellyseerrUrl);
             }
@@ -587,6 +902,10 @@ public class JellyseerrSession
     /// <summary>The Seerr connect.sid session cookie value.</summary>
     [JsonPropertyName("sessionCookie")]
     public string SessionCookie { get; set; } = string.Empty;
+
+    /// <summary>Whether this session uses API-key impersonation instead of a session cookie.</summary>
+    [JsonPropertyName("useApiKey")]
+    public bool UseApiKey { get; set; }
 
     /// <summary>The Seerr internal user ID.</summary>
     [JsonPropertyName("jellyseerrUserId")]

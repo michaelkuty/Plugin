@@ -176,6 +176,14 @@
                                 The icon is always auto-detected regardless of this setting.
                             </div>
                         </div>
+                        <div class="inputContainer">
+                            <label class="inputLabel inputLabelUnfocused" for="JellyseerrApiKey">Seerr API Key (for SSO users)</label>
+                            <input type="password" id="JellyseerrApiKey" is="emby-input" placeholder="Enter your Seerr API key" />
+                            <div class="fieldDescription">
+                                <strong>Optional:</strong> When set, passwordless SSO users can access Seerr using API key impersonation.
+                                Moonfin uses the admin API key with <code>X-API-User</code> headers to act on behalf of each matched Seerr user.
+                            </div>
+                        </div>
                         <div style="background-color: rgba(0, 164, 220, 0.1); border-left: 4px solid #00a4dc; border-radius: 4px; padding: 1em 1.5em; margin: 1em 0;">
                             <strong>SSO Proxy:</strong> When Seerr is enabled, Moonfin provides single sign-on.
                             Users authenticate once with their Jellyfin credentials, and the session is stored server-side.
@@ -1467,6 +1475,7 @@
                     document.querySelector('#JellyseerrEnabled').checked = config.JellyseerrEnabled;
                     document.querySelector('#JellyseerrUrl').value = config.JellyseerrUrl || '';
                     document.querySelector('#JellyseerrDisplayName').value = config.JellyseerrDisplayName || '';
+                    document.querySelector('#JellyseerrApiKey').value = config.JellyseerrApiKey || '';
                     document.querySelector('#MdblistApiKey').value = config.MdblistApiKey || '';
                     document.querySelector('#TmdbApiKey').value = config.TmdbApiKey || '';
                     document.querySelector('#WebDefaultServerUrl').value = config.WebDefaultServerUrl || '';
@@ -1657,6 +1666,7 @@
                             config.JellyseerrEnabled = document.querySelector('#JellyseerrEnabled').checked;
                             config.JellyseerrUrl = document.querySelector('#JellyseerrUrl').value || null;
                             config.JellyseerrDisplayName = document.querySelector('#JellyseerrDisplayName').value || null;
+                            config.JellyseerrApiKey = document.querySelector('#JellyseerrApiKey').value || null;
                             config.MdblistApiKey = document.querySelector('#MdblistApiKey').value || null;
                             config.TmdbApiKey = document.querySelector('#TmdbApiKey').value || null;
                             config.WebDefaultServerUrl = document.querySelector('#WebDefaultServerUrl').value || null;

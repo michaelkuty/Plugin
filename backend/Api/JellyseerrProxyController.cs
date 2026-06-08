@@ -282,8 +282,8 @@ public class JellyseerrLoginRequest
     public string? Password { get; set; }
 
     /// <summary>
-    /// Authentication type: "jellyfin" (default) or "local".
-    /// Determines which Seerr auth endpoint is used.
+    /// Authentication type: "jellyfin" (default), "local", or "apikey".
+    /// Determines which Seerr auth flow is used.
     /// </summary>
     public string? AuthType { get; set; }
 }

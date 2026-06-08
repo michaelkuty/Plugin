@@ -31,6 +31,11 @@ public class PluginConfiguration : BasePluginConfiguration
     public string? JellyseerrDisplayName { get; set; }
 
     /// <summary>
+    /// Seerr admin API key used to impersonate passwordless SSO users.
+    /// </summary>
+    public string? JellyseerrApiKey { get; set; }
+
+    /// <summary>
     /// Server-wide MDBList API key shared with all users.
     /// Users who set their own key will use that instead.
     /// </summary>
